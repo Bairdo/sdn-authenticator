@@ -47,6 +47,24 @@ class Proto(object):
     TCP_HTTP = 80
     UDP_DNS = 53
 
+class CapFlowInterface():
+
+    def __init__(self, cf, *args, **kwargs):
+
+        self.cf = cf
+       
+    def is_authed(self, ip):
+        print self.cf.authenticate[ip]
+        if self.cf.authenticate[ip] == {}:
+            return False
+        return True
+
+    def log_client_off(self, ip, user):
+        self.cf.log_client_off(ip, user)
+
+    def new_client(self, ip, user):
+        self.cf.new_client(ip, user)
+
 
 class CapFlow(ABCRyuApp):
     """A simple application for learning MAC addresses and
@@ -70,11 +88,14 @@ class CapFlow(ABCRyuApp):
         self._supported = self._verify_contr_handlers()
 
         self.mac_to_port = collections.defaultdict(dict)
+        self.ip_to_mac = collections.defaultdict(dict)
         self.authenticate = collections.defaultdict(dict)
 
         self.next_table = 2
 
-        self._contr._wsgi.registory['UserController2'] = self.authenticate
+        self.CRI = CapFlowInterface(self)	
+
+        self._contr._wsgi.registory['UserController2'] = self.CRI
         UserController2.register(self._contr._wsgi)
         
         min_lvl = logging.DEBUG
@@ -93,6 +114,40 @@ class CapFlow(ABCRyuApp):
         self._logging.addHandler(logging_config["handler"])
         
         self._logging.info("Started CapFlow...");
+
+    def log_client_off(self, ip, user):
+        self._logging.info("Client on ip %s has logged off. removing rules now.", ip)
+        del self.authenticate[ip]
+        for datapath in self._contr.get_all():
+            datapath = datapath[1]
+
+            ofproto = datapath.ofproto
+            parser = datapath.ofproto_parser
+
+            mac = self.ip_to_mac[ip]
+            # the authenticated l2 flows.
+            # this will probably delete the rules that allow the you have been logged off page
+            match = parser.OFPMatch(eth_src=mac)
+            self._contr.remove_flow(datapath, parser, self._table_id_cf,
+                                    ofproto.OFPFC_DELETE, 50000, 
+                                    match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
+            match = parser.OFPMatch(eth_dst=mac)
+            self._contr.remove_flow(datapath, parser, self._table_id_cf,
+                                    ofproto.OFPFC_DELETE, 50000, 
+                                    match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
+            # send to controller rules
+            match = parser.OFPMatch(eth_src=mac)
+            self._contr.remove_flow(datapath, parser, self._table_id_cf,
+                                    ofproto.OFPFC_DELETE, 1000, 
+                                    match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
+            match = parser.OFPMatch(eth_dst=mac)
+            self._contr.remove_flow(datapath, parser, self._table_id_cf,
+                                    ofproto.OFPFC_DELETE, 1000, 
+                                    match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
+
+    def new_client(self, ip, user):
+        self.authenticate[ip] = True
+        self._logging.info("Client %s on ip %s has logged on. the rules will be installed shortly", user, ip)
 
     def packet_in(self, event):
         """Process a packet-in event from the controller.
@@ -303,7 +358,7 @@ class CapFlow(ABCRyuApp):
 
         if self.is_l2_traffic_allowed(nw_src, nw_dst, ip):
             self._logging.info("%s and %s is authenticated, installing bypass", nw_src, nw_dst)
-
+            
             self.approve_user(datapath, parser, nw_src, nw_dst)
             return
 
@@ -431,11 +486,22 @@ class CapFlow(ABCRyuApp):
             if nw_src == entry[0] and nw_dst == entry[1]:
                 l2_traffic_is_allowed = True
         if self.authenticate[ip.src] is True and self.authenticate[ip.dst] is True:
+            self.ip_to_mac[ip.src] = nw_src
+            self.ip_to_mac[ip.dst] = nw_dst
             l2_traffic_is_allowed = True
         if self.authenticate[ip.src] is True and nw_dst == config.GATEWAY_MAC:
-            l2_traffic_is_allowed = True
+           self.ip_to_mac[ip.src] = nw_src
+           l2_traffic_is_allowed = True
         if nw_src == config.GATEWAY_MAC and self.authenticate[ip.dst] is True:
+            self.ip_to_mac[ip.dst] = nw_dst
             l2_traffic_is_allowed = True
+
+        if self.authenticate[ip.src] is True and nw_dst == config.AUTH_SERVER_MAC:
+           self.ip_to_mac[ip.src] = nw_src
+           l2_traffic_is_allowed = True
+        if nw_src == config.AUTH_SERVER_MAC and self.authenticate[ip.dst] is True:
+           self.ip_to_mac[ip.dst] = nw_dst
+           l2_traffic_is_allowed = True
 
         self._logging.debug("l2 traffic is allowed: %s", l2_traffic_is_allowed)
 

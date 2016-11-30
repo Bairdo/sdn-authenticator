@@ -33,7 +33,7 @@ class UserController2(ControllerBase):
     """
     def __init__(self, req, link, data, **config):
         super(UserController2, self).__init__(req, link, data, **config)
-        self.authenticat = data
+        self.capflow_interface = data
         
         min_lvl = logging.DEBUG
         console_handler = logging.StreamHandler()
@@ -56,10 +56,6 @@ class UserController2(ControllerBase):
     def register(wsgi):
         route_name = 'authenticate'
         uri = '/v1.0/authenticate'
-        wsgi.mapper.connect(route_name, uri,
-                            controller=UserController2, action='list',
-                            conditions=dict(method=['GET', 'HEAD']))
-
         uri += '/ip={ip}&user={user}'
         s = wsgi.mapper.submapper(controller=UserController2)
         s.connect(route_name, uri, action='post',
@@ -69,8 +65,6 @@ class UserController2(ControllerBase):
         s.connect(route_name, uri, action='delete',
                   conditions=dict(method=['DELETE']))
                   
-
-
     @staticmethod
     def validate(address):
         """is the ip address given an actual IP address.
@@ -80,10 +74,6 @@ class UserController2(ControllerBase):
             return True
         except:
             return False
-
-    def list(self, req, **_kwargs):
-        body = json.dumps(self.authenticate)
-        return Response(content_type='application/json', body=body)
 
     def post(self, req, ip, user, **_kwargs):
         if not self.validate(ip):
@@ -95,8 +85,8 @@ class UserController2(ControllerBase):
         ip = str(ip)
 
         self.send_user_rules(user, ip)
+	self.capflow_interface.new_client(ip, user)
 
-        self.authenticat[ip] = True
         return Response(status=200)
 
     def put(self, req, ip, user, **_kwargs):
@@ -105,17 +95,20 @@ class UserController2(ControllerBase):
         self._logging.info("POST received ip: %s, user: %s", ip, user)
         ip = str(ip)
         self.send_user_rules(user, ip)
+	self.capflow_interface.new_client(ip, user)
 
-        self.authenticat[ip] = True
         return Response(status=200)
 
     def delete(self, req, ip, user, **_kwargs):
-        if self.authenticat[ip] is False:
-            return Response(status=404)
+        if self.capflow_interface.is_authed(ip) is False:
+            print "user already logged off"
+            return Response(status=200)
 
         print "HTTP Delete : " + user + " " + ip
+	# todo remove the flows somehow.
 
-        del self.authenticat[ip]
+	self.capflow_interface.log_client_off(ip, user)
+
         return Response(status=200)
 
     def send_user_rules(self, user, ip):
