@@ -25,7 +25,7 @@ Change the tables that Ryu_Application/aclswitch/aclswitch.py ~line 86
 
 change directory into ACLSwitch/Ryu_Application
 
-$ ln -s authenticator ~/sdn-authenticator
+$ ln -s ~/sdn-authenticator/ authenticators
 
 
 On the "portal":
