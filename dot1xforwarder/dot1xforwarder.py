@@ -42,9 +42,12 @@ from rest import UserController
 
 
 R2_PRIORITY = 5100
-DHCP_SERVER_PORT = 2
+DHCP_SERVER_PORT = 3
 ACCESS_PORT = 4
 PORTAL_PORT = 1
+
+NETMASK = "255.255.255.0"
+NETWORK_ADDRESS = "10.0.0.0"
 
 class Proto(object):
     """Class for protocol numbers
@@ -127,29 +130,29 @@ class DpList(object):
 
             # if src is local ip, and new ip. and dst is on the internet.
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_src=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
             inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+1, match, inst, 0, self._table_id_1x, cookie=0x03)
 
             # if dst is local ip, and new ip. and src is on the internet
             match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_dst=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
             inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+2, match, inst, 0, self._table_id_1x, cookie=0x04)
 
             # if both dst and src is local ip, and new ip. might need a special case if both local.
             match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=('10.0.0.0', '255.255.255.0'),
-                                    ipv4_dst=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_src=(NETWORK_ADDRESS, NETMASK),
+                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
             inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+3, match, inst, 0, self._table_id_1x, cookie=0x05)
 
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=('10.0.0.0', '255.255.255.0'),
-                                    ipv4_dst=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_src=(NETWORK_ADDRESS, NETMASK),
+                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
             inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+4, match, inst, 0, self._table_id_1x, cookie=0x06)
@@ -409,28 +412,28 @@ class Dot1XForwarder(ABCRyuApp):
 
             # if src is local ip, and new ip. and dst is on the internet.
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_src=(NETWORK_ADDRESS, NETMASK))
             self._contr.remove_flow(datapath, parser, self._table_id_1x,
                                     ofproto.OFPFC_DELETE_STRICT, R2_PRIORITY+1,
                                     match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
             # if dst is local ip, and new ip. and src is on the internet
             match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_dst=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             self._contr.remove_flow(datapath, parser, self._table_id_1x,
                                     ofproto.OFPFC_DELETE_STRICT, R2_PRIORITY+2,
                                     match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
 
             # if both dst and src is local ip, and new ip. might need a special case if both local.
             match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=('10.0.0.0', '255.255.255.0'),
-                                    ipv4_dst=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_src=(NETWORK_ADDRESS, NETMASK),
+                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             self._contr.remove_flow(datapath, parser, self._table_id_1x,
                                     ofproto.OFPFC_DELETE_STRICT, R2_PRIORITY+3,
                                     match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
 
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=('10.0.0.0', '255.255.255.0'),
-                                    ipv4_dst=('10.0.0.0', '255.255.255.0'))
+                                    ipv4_src=(NETWORK_ADDRESS, NETMASK),
+                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             self._contr.remove_flow(datapath, parser, self._table_id_1x,
                                     ofproto.OFPFC_DELETE_STRICT, R2_PRIORITY+4,
                                     match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
