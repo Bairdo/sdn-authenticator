@@ -9,8 +9,8 @@ CTL_REST_IP = "10.0.10.2"
 CTL_REST_PORT = "8080"
 CTL_MAC = "08:00:27:00:02:02"
 
-GATEWAY_MAC = "08:00:27:00:04:02"
-GATEWAY_PORT = 2
+GATEWAY_MAC = "52:54:00:12:35:02"
+GATEWAY_PORT = 3
 # L2 src-dst pairs which are whitelisted and does not need to go through auth
 WHITELIST = [
              (AUTH_SERVER_MAC, CTL_MAC),
