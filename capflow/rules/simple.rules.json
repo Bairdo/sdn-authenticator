@@ -1,0 +1,3 @@
+# "ip" is the ip address given to the users device at run time (a la DHCP)
+{"rule":{"ip_src":"*", "ip_dst":"ip", "tp_proto":"*", "port_src":"*", "port_dst":"*", "policy":"default", "action":"allow"}}
+{"rule":{"ip_src":"ip", "ip_dst":"*", "tp_proto":"*", "port_src":"*", "port_dst":"*", "policy":"default", "action":"allow"}}

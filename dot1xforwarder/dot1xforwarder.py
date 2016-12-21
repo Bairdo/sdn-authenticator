@@ -48,6 +48,7 @@ PORTAL_PORT = 1
 
 NETMASK = "255.255.255.0"
 NETWORK_ADDRESS = "10.0.0.0"
+NETWORK_ADDRESS = "10.0.6.0" #gitignore
 
 class Proto(object):
     """Class for protocol numbers
@@ -91,11 +92,33 @@ class DpList(object):
     def new_client(self, mac, user):
         """New client has been authorised, add the flows to work out the IP address.
         """
-        self._d1xf.add_new_client(mac, user)
-        print "TODO user not implemented yet"
+
+        print "TODO multiple switches not implemented yet."
         for d in self.datapaths:
             ofproto = d.ofproto
             parser = d.ofproto_parser
+
+            match = parser.OFPMatch(eth_src=mac)
+            self._contr.remove_flow(d,
+                                    parser,
+                                    self._table_id_1x,
+                                    ofproto.OFPFC_DELETE, # could also be ofproto.OFPFC_DELETE_STRICT
+                                    5110,
+                                    match,
+                                    ofproto.OFPP_ANY,
+                                    ofproto.OFPG_ANY,
+                                    cookie=0xd)
+            
+            match = parser.OFPMatch(eth_dst=mac)
+            self._contr.remove_flow(d,
+                                    parser,
+                                    self._table_id_1x,
+                                    ofproto.OFPFC_DELETE, # could also be ofproto.OFPFC_DELETE_STRICT
+                                    5110,
+                                    match,
+                                    ofproto.OFPP_ANY,
+                                    ofproto.OFPG_ANY,
+                                    cookie=0xe)
 
             # allow all level 2 traffic through let l2switch handle the where.
             # this rule will allow arp and dhcp to go through.
@@ -132,31 +155,32 @@ class DpList(object):
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
                                     ipv4_src=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions), parser.OFPInstructionGotoTable(self._blacklist_table)]
             self._contr.add_flow(d, R2_PRIORITY+1, match, inst, 0, self._table_id_1x, cookie=0x03)
 
             # if dst is local ip, and new ip. and src is on the internet
             match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
                                     ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions), parser.OFPInstructionGotoTable(self._blacklist_table)]
             self._contr.add_flow(d, R2_PRIORITY+2, match, inst, 0, self._table_id_1x, cookie=0x04)
 
             # if both dst and src is local ip, and new ip. might need a special case if both local.
             match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
                                     ipv4_src=(NETWORK_ADDRESS, NETMASK),
                                     ipv4_dst=(NETWORK_ADDRESS, NETMASK))
-            actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)] 
+            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions), parser.OFPInstructionGotoTable(self._blacklist_table)]
             self._contr.add_flow(d, R2_PRIORITY+3, match, inst, 0, self._table_id_1x, cookie=0x05)
 
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
                                     ipv4_src=(NETWORK_ADDRESS, NETMASK),
                                     ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions), parser.OFPInstructionGotoTable(self._blacklist_table)]
             self._contr.add_flow(d, R2_PRIORITY+4, match, inst, 0, self._table_id_1x, cookie=0x06)
-
+        # this must happen after the remove flow in the above block.
+        self._d1xf.add_new_client(mac, user)
 
 class Dot1XForwarder(ABCRyuApp):
     """Class that controls the 802.1X process.
@@ -333,6 +357,7 @@ class Dot1XForwarder(ABCRyuApp):
 	    self._logging.debug("ignore packet from other tables %d, my table: %d", event.msg.table_id, self._table_id_1x)
 	    return
 
+        self._logging.debug("Cookie: %d", event.msg.cookie)
         if ip_pkt is None:
             # packet in is only used for learning the ip address of a mac that
             # has authenticated with 802.1X. so drop everything else.
@@ -390,7 +415,7 @@ class Dot1XForwarder(ABCRyuApp):
 	    self._logging.debug("authed-ip-by-mac %s", self.authed_ip_by_mac)
             if self.authed_ip_by_mac[mac] == {}:
                 return True
-            return False
+            return True # False 
         # the mac address could be not authenticated.
         # OR (mac could be authed and ip has already been dealt with).
         # TODO how should we deal with this?
@@ -437,6 +462,17 @@ class Dot1XForwarder(ABCRyuApp):
             self._contr.remove_flow(datapath, parser, self._table_id_1x,
                                     ofproto.OFPFC_DELETE_STRICT, R2_PRIORITY+4,
                                     match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
+
+	    match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_SERVER_DST)
+            self._contr.remove_flow(datapath, parser, self._table_id_1x,
+                                    ofproto.OFPFC_DELETE_STRICT, 5200,
+                                    match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
+
+       	    match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_CLIENT_DST)
+            self._contr.remove_flow(datapath, parser, self._table_id_1x,
+                                    ofproto.OFPFC_DELETE_STRICT, 5200,
+                                    match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
+
 	else:
 	    self._logging.debug("mac %s isnt authenticated", mac)
 
@@ -462,6 +498,8 @@ class Dot1XForwarder(ABCRyuApp):
         # get rules for user.
 	
         directory = os.path.join(os.path.dirname(__file__),"..", "capflow/rules")
+        user = "simple"
+        print "TODO\nTODO\nusing the 'simplerules'.\nTODO\nTODO\nTODO"
         rule_location = "{:s}/{:s}.rules.json".format(directory, user)
 
         with open(rule_location) as user_rules:
@@ -491,7 +529,8 @@ class Dot1XForwarder(ABCRyuApp):
         # TODO need to deal with other datapaths.
         # TODO hostapd might only be sending when the retransmit count is >= 3 anyway.
         # but we might want to make it configurable from this application
-        if retrans_count >= 2:
+	print "client should only do the portal after 1000 retransmits"
+        if int(retrans_count) >= 1000:
 	    self._logging.info("Client %s will now use captive portal after retrans: %s", mac, retrans_count)
 	    for datapath in self._contr.get_all():
 #            datapath = self._contr.switch_get_datapath(123917682135244)
