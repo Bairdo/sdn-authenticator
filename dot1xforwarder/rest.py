@@ -60,7 +60,7 @@ class UserController(ControllerBase):
                   conditions=dict(method=['POST']))
         s.connect(route_name, uri, action='put',
                   conditions=dict(method=['PUT']))
-        s.connect(route_name, uri, action='delete',
+        s.connect('authenticate', '/authenticate', action='delete',
                   conditions=dict(method=['DELETE']))
 
         route_name = 'idle'
@@ -69,6 +69,25 @@ class UserController(ControllerBase):
         s = wsgi.mapper.submapper(controller=UserController)
         s.connect(route_name, uri, action='idle_post',
                   conditions=dict(method=['POST']))
+
+        s.connect('authenticate', '/authenticate',
+		  action="authenticate_post",
+		  conditions=dict(method=['POST']))
+
+
+
+    def authenticate_post(self, req, **kwargs):
+        print req.body
+        try:
+            authJSON = json.loads(req.body)
+        except:
+            return Response(status=400, body="Unable to parse JSON")
+        print authJSON
+        self._logging.info("POST with JSON, MAC: %s, User: %s", authJSON['mac'], authJSON['user'])
+        self.dpList.new_client(authJSON['mac'], authJSON['user'])
+        return Response(status=200)
+
+
 
     def idle_post(self, req, retrans, mac, user, **_kwargs):
         """the REST endpoint for an HTTP POST when the client has been idle.
@@ -95,8 +114,15 @@ class UserController(ControllerBase):
         # TODO
         return Response(status=200)
 
-    def delete(self, req, mac, user, **_kwargs):
+    def delete(self, req, **_kwargs):
         # TODO
+	try:
+            JSON = json.loads(req.body)
+        except:
+            return Response(status=400, body="Failed to parse JSON")
+
+        mac = JSON['mac']
+        user = JSON['user']
         print "TODO HTTP Delete : " + user + " " + mac
         self.dpList.log_client_off(mac, user)
         self._logging.info("User %s at mac %s should now logged off.", user, mac)
