@@ -24,7 +24,7 @@ import socket
 
 from webob import Response
 from ryu.app.wsgi import ControllerBase
-
+from ryu.app.wsgi import route
 
 class UserController(ControllerBase):
     """The REST class, that accepts requests for the user that is tryin to authenticate using 802.1X
@@ -56,8 +56,8 @@ class UserController(ControllerBase):
         uri = '/v1.0/authenticate'
         uri += '/mac={mac}&user={user}'
         s = wsgi.mapper.submapper(controller=UserController)
-        s.connect(route_name, uri, action='post',
-                  conditions=dict(method=['POST']))
+#        s.connect(route_name, uri, action='post',
+ #                 conditions=dict(method=['POST']))
         s.connect(route_name, uri, action='put',
                   conditions=dict(method=['PUT']))
         s.connect(route_name, uri, action='delete',
@@ -69,6 +69,22 @@ class UserController(ControllerBase):
         s = wsgi.mapper.submapper(controller=UserController)
         s.connect(route_name, uri, action='idle_post',
                   conditions=dict(method=['POST']))
+
+        s.connect('auth', '/authenticate/auth', action="authenticate_post", conditions=dict(method=['POST']))
+
+#    @route("authenticate", '/authenticate/auth', methods=["POST"])
+    def authenticate_post(self, req, **kwargs):
+        try:
+            authJSON = json.loads(req.body)
+        except:
+            return Response(status=400, body="Unable to parse JSON")
+        print authJSON
+        self._logging.info("POST with JSON, MAC: %s, User: %s", authJSON['mac'], authJSON['user'])
+        self.dpList.new_client(authJSON['mac'], authJSON['user'])
+        return Response(status=200)
+      
+
+
 
     def idle_post(self, req, retrans, mac, user, **_kwargs):
         """the REST endpoint for an HTTP POST when the client has been idle.
@@ -86,7 +102,7 @@ class UserController(ControllerBase):
         except:
             return False
 
-    def post(self, req, mac, user, **_kwargs):
+    def post1(self, req, mac, user, **_kwargs):
         self.dpList.new_client(mac, user)
         self._logging.info("POST received for MAC: %s, User: %s", mac, user)
         return Response(status=200)
