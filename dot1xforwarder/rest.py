@@ -21,10 +21,14 @@
 import json
 import logging
 import socket
+import os
+import signal
 
 from webob import Response
 from ryu.app.wsgi import ControllerBase
 
+import lockfile
+import psutil
 
 class UserController(ControllerBase):
     """The REST class, that accepts requests for the user that is tryin to authenticate using 802.1X
@@ -49,6 +53,10 @@ class UserController(ControllerBase):
         self._logging.addHandler(logging_config["handler"])
         
         self._logging.info("Started Dot1XForwarder's REST interface...");
+        self._contr_pid = -1
+        
+        self.active_file = os.getenv('DOT1X_ACTIVE_HOSTS', '/etc/ryu/1x_active_users.txt')
+        self.idle_file = os.getenv('DOT1X_IDLE_HOSTS', '/etc/ryu/1x_idle_users.txt')
 
     @staticmethod
     def register(wsgi):
@@ -73,7 +81,15 @@ class UserController(ControllerBase):
     def idle_post(self, req, retrans, mac, user, **_kwargs):
         """the REST endpoint for an HTTP POST when the client has been idle.
         """
+        
+        fd = lockfile.lock(self.idle_file, os.O_APPEND | os.O_WRONLY)
+        os.write(fd, mac + "," + str(retrans) + "\n")
+        lockfile.unlock(fd)
+        
+        
+        
         self._logging.info("retrans: %s, MAC: %s, user: %s", str(retrans), mac, user)
+        self.send_signal()
         self.dpList.idle_mac(mac, retrans)
 
     @staticmethod
@@ -86,9 +102,24 @@ class UserController(ControllerBase):
         except:
             return False
 
+
+    def send_signal(self):
+        if self._contr_pid < 0:
+            for process in psutil.process_iter():
+                if process.name() == "ryu-manager" and any("controller.py" in s for s in process.cmdline()):
+                    self._contr_pid = process.pid
+                    break
+        
+        os.kill(self._contr_pid,signal.SIGUSR1)                
+        
     def post(self, req, mac, user, **_kwargs):
         self.dpList.new_client(mac, user)
+        print os.getcwd()
+        fd = lockfile.lock(self.active_file, os.O_APPEND | os.O_RDWR)
+        os.write(fd, mac + "," + user + "\n")
+        lockfile.unlock(fd)
         self._logging.info("POST received for MAC: %s, User: %s", mac, user)
+        self.send_signal()
         return Response(status=200)
 
     def put(self, req, mac, user, **_kwargs):

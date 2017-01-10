@@ -23,12 +23,16 @@ import collections
 import json
 import logging
 import os
+import signal
+import fcntl
 import urllib2
 
 from ryu.controller.ofp_event import EventOFPPacketIn
 from ryu.controller.ofp_event import EventOFPSwitchFeatures
 from ryu.controller import dpset
+from ryu.controller import event
 from ryu.ofproto import ofproto_v1_3
+from ryu.ofproto.ofproto_v1_3_parser import OFPMatch
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ipv4
@@ -40,6 +44,8 @@ from ryu.app.wsgi import WSGIApplication
 from abc_ryu_app import ABCRyuApp
 from rest import UserController
 
+from faucet.util import get_sys_prefix
+import lockfile
 
 R2_PRIORITY = 5100
 DHCP_SERVER_PORT = 3
@@ -48,6 +54,10 @@ PORTAL_PORT = 1
 
 NETMASK = "255.255.255.0"
 NETWORK_ADDRESS = "10.0.0.0"
+
+class EventDot1xUserChange(event.EventBase):
+    """Event used to indicate a change in config files"""
+    pass
 
 class Proto(object):
     """Class for protocol numbers
@@ -93,6 +103,108 @@ class DpList(object):
         """
         self._d1xf.add_new_client(mac, user)
         print "TODO user not implemented yet"
+
+
+class Dot1XForwarder(ABCRyuApp):
+    """Class that controls the 802.1X process.
+    """
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+    _CONTEXTS = {
+#        'dpset': dpset.DPSet,
+        'wsgi': WSGIApplication
+    }
+
+    _APP_NAME = "Dot1XForwarder"
+    _EXPECTED_HANDLERS = (EventOFPSwitchFeatures.__name__, 
+                          EventOFPPacketIn.__name__,
+                          EventDot1xUserChange.__name__)
+
+    def __init__(self, contr, *args, **kwargs):
+        super(Dot1XForwarder, self).__init__()
+        self._contr = contr
+        self._table_id_1x = 0
+        self.capflow_table = 1
+        self.blacklist_table = 2
+        self.l2_switch_table = 2
+        self._supported = self._verify_contr_handlers()
+
+        self.datapaths = []
+        self.mac_to_ip = collections.defaultdict(dict)
+        self.ip_to_mac = collections.defaultdict(dict)
+        self.authed_ip_by_mac = collections.defaultdict(dict)
+
+        self.authenicated_mac_to_user = collections.defaultdict(dict)
+
+        self.authenticate = collections.defaultdict(dict)
+        self.dpList = DpList(self, self._contr, self._table_id_1x,
+                             self.blacklist_table, self.l2_switch_table)
+
+        self._contr._wsgi.registory['UserController'] = self.dpList
+        UserController.register(self._contr._wsgi)
+        
+        min_lvl = logging.DEBUG
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(min_lvl)
+        #formatter = logging.Formatter("%(asctime)s - %(levelname)s - "
+        #                              "%(name)s - %(message)s")
+        formatter = logging.Formatter("%(levelname)s - %(name)s - %("
+                                      "message)s")
+        console_handler.setFormatter(formatter)
+        logging_config = {"min_lvl": min_lvl, "propagate":
+                                False, "handler": console_handler}
+        self._logging = logging.getLogger(__name__)
+        self._logging.setLevel(logging_config["min_lvl"])
+        self._logging.propagate = logging_config["propagate"]
+        self._logging.addHandler(logging_config["handler"])
+
+        self._logging.info("Started Dot1XForwarder...");
+        
+        self.active_file = os.getenv('DOT1X_ACTIVE_HOSTS', get_sys_prefix() + '/etc/ryu/1x_active_users.txt')
+        self.idle_file = os.getenv('DOT1X_IDLE_HOSTS', get_sys_prefix() + '/etc/ryu/1x_idle_users.txt')
+        
+        #clear the config files
+        with open(self.active_file, 'w'): pass
+        with open(self.idle_file, 'w'): pass
+
+    def read_file(self,filename):
+        dictionary = dict()
+        with open(filename) as file_:
+            for line in file_:
+                currentline = line.split(",")
+                dictionary[currentline[0]] = currentline[1]
+        return dictionary
+    
+    def check_active(self):
+        fd = lockfile.lock(self.active_file, os.O_RDWR)
+        active_users = self.read_file(self.active_file)
+        lockfile.unlock(fd)
+        new_users = { k : active_users[k] for k in set(active_users) - set(self.authenticate) }
+        for mac,usr in new_users.iteritems():
+            self.add_new_client(mac,usr)
+        
+        log_off_users = { k : self.authenticate[k] for k in set(self.authenticate) - set(active_users) }
+        for mac,usr in log_off_users.iteritems():
+            self.log_client_off(mac,usr)
+    
+    def check_idle(self):
+        fd = lockfile.lock(self.idle_file, os.O_RDWR)
+        idle_users = self.read_file(self.idle_file)
+        os.ftruncate(fd,0)
+        lockfile.unlock(fd)
+        for mac,retry in idle_users.iteritems():
+            print "use portal +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+            self.make_client_use_portal(mac,retry)
+        
+    def reload_config(self,event):
+        self.check_active()
+        self.check_idle()
+                
+    def add_new_client(self, mac, user):
+        """New user has been authenticated with the given MAC address.
+        """
+        # todo deal with user.
+        self.authenicated_mac_to_user[mac] = user
+        
         for d in self.datapaths:
             ofproto = d.ofproto
             parser = d.ofproto_parser
@@ -100,30 +212,29 @@ class DpList(object):
             # allow all level 2 traffic through let l2switch handle the where.
             # this rule will allow arp and dhcp to go through.
             match = parser.OFPMatch(eth_dst=mac)
-            actions = parser.OFPInstructionGotoTable(self._l2switch_table)
+            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
             inst = [actions]
             self._contr.add_flow(d, 5001, match, inst, 0, self._table_id_1x, cookie=0x01)
 
             match = parser.OFPMatch(eth_src=mac)
-            actions = parser.OFPInstructionGotoTable(self._l2switch_table)
+            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
             inst = [actions]
             self._contr.add_flow(d, 5002, match, inst, 0, self._table_id_1x, cookie=0x02)
             match = parser.OFPMatch(eth_dst=mac)
             
-
             
-	    actions = parser.OFPInstructionGotoTable(self._l2switch_table)
+            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
             inst = [actions]
-	    match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_SERVER_DST)
+            match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_SERVER_DST)
             self._contr.add_flow(d, 5200, match, inst, 0, self._table_id_1x, cookie=0x20)
 
        	    match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_CLIENT_DST)
 
-            actions = parser.OFPInstructionGotoTable(self._l2switch_table)
+            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
             inst = [actions]
             self._contr.add_flow(d, 5200, match, inst, 0, self._table_id_1x, cookie=0x21)
             
-	    # 'R2' rules
+            # 'R2' rules
             # if is a ip packet on the known mac. send to controller as well.
             # once we have the ip address this mac is using, we delete this rule.
             # what if multiple ips on the interface though?
@@ -157,67 +268,9 @@ class DpList(object):
             inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+4, match, inst, 0, self._table_id_1x, cookie=0x06)
 
-
-class Dot1XForwarder(ABCRyuApp):
-    """Class that controls the 802.1X process.
-    """
-    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-    _CONTEXTS = {
-#        'dpset': dpset.DPSet,
-        'wsgi': WSGIApplication
-    }
-
-    _APP_NAME = "Dot1XForwarder"
-    _EXPECTED_HANDLERS = (EventOFPSwitchFeatures.__name__, EventOFPPacketIn.__name__)
-
-    def __init__(self, contr, *args, **kwargs):
-        super(Dot1XForwarder, self).__init__()
-        self._contr = contr
-        self._table_id_1x = 0
-        self.capflow_table = 1
-        self.blacklist_table = 2
-        self.l2_switch_table = 4
-        self._supported = self._verify_contr_handlers()
-
-        self.mac_to_ip = collections.defaultdict(dict)
-        self.ip_to_mac = collections.defaultdict(dict)
-        self.authed_ip_by_mac = collections.defaultdict(dict)
-
-        self.authenicated_mac_to_user = collections.defaultdict(dict)
-
-        self.authenticate = collections.defaultdict(dict)
-        self.dpList = DpList(self, self._contr, self._table_id_1x,
-                             self.blacklist_table, self.l2_switch_table)
-
-        self._contr._wsgi.registory['UserController'] = self.dpList
-        UserController.register(self._contr._wsgi)
-        
-        min_lvl = logging.DEBUG
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(min_lvl)
-        #formatter = logging.Formatter("%(asctime)s - %(levelname)s - "
-        #                              "%(name)s - %(message)s")
-        formatter = logging.Formatter("%(levelname)s - %(name)s - %("
-                                      "message)s")
-        console_handler.setFormatter(formatter)
-        logging_config = {"min_lvl": min_lvl, "propagate":
-                                False, "handler": console_handler}
-        self._logging = logging.getLogger(__name__)
-        self._logging.setLevel(logging_config["min_lvl"])
-        self._logging.propagate = logging_config["propagate"]
-        self._logging.addHandler(logging_config["handler"])
-
-        self._logging.info("Started Dot1XForwarder...");
-
-    def add_new_client(self, mac, user):
-        """New user has been authenticated with the given MAC address.
-        """
-        # todo deal with user.
-        self.authenicated_mac_to_user[mac] = user
-
     def log_client_off(self, mac, user):
         del self.authenicated_mac_to_user[mac]
-	del self.authed_ip_by_mac[mac]
+        del self.authed_ip_by_mac[mac]
 
         for datapath in self._contr.get_all():
             datapath = datapath[1]
@@ -278,7 +331,7 @@ class Dot1XForwarder(ABCRyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        self.dpList.append(datapath)
+        self.datapaths.append(datapath)
 
         # all eap traffic goes to the portal nuc.
         match = parser.OFPMatch(in_port=PORTAL_PORT, eth_type=Proto.EAPOL)
@@ -339,9 +392,9 @@ class Dot1XForwarder(ABCRyuApp):
             return
 
         self._logging.info("Packet In ip_src: %s, ip_dst: %s", ip_pkt.src, ip_pkt.dst)
-#        print "d1x " + str( packet.Packet(event.msg.data))
+        #print "d1x " + str( packet.Packet(event.msg.data))
         dhcp_pkt = pkt.get_protocol(dhcp.dhcp)
-	udp_pkt = pkt.get_protocol(udp.udp)
+        udp_pkt = pkt.get_protocol(udp.udp)
 
         # if it is a DHCP packet then forward it appropriatly.
         if udp_pkt is not None:
@@ -464,6 +517,7 @@ class Dot1XForwarder(ABCRyuApp):
         directory = os.path.join(os.path.dirname(__file__),"..", "capflow/rules")
         rule_location = "{:s}/{:s}.rules.json".format(directory, user)
 
+        acl_rules = dict()
         with open(rule_location) as user_rules:
             for line in user_rules:
                 if line.startswith("#"):
@@ -471,17 +525,14 @@ class Dot1XForwarder(ABCRyuApp):
                 rule = json.loads(line)
                 if rule["rule"]['ip_src'] == "ip":
                     self._logging.debug("replacing ip_src")
-                    rule["rule"]['ip_src'] = ip
+                    match = OFPMatch(ip_src = ip)
                 if rule["rule"]['ip_dst'] == "ip":
                     self._logging.debug("replacing ip_dst")
-                    rule["rule"]['ip_dst'] = ip
-
-                # rule["rule"]['time_enforce'] = ["0", "0"]
-                req = urllib2.Request('http://127.0.0.1:8080/aclswitch/acl')
-                req.add_header('Content-Type', 'application/json')
-
-                response = urllib2.urlopen(req, json.dumps(rule))
-                self._logging.debug("%s", response)
+                    match = OFPMatch(ip_dst = ip)
+                
+                acl_rules[match] = 1
+        self._contr.add_acl_rule(100, acl_rules)
+        os.kill(os.getpid(),signal.SIGHUP)  
 
     def make_client_use_portal(self, mac, retrans_count):
         """Redirect the client to use the captive portal instead of 802.1X.
@@ -496,6 +547,7 @@ class Dot1XForwarder(ABCRyuApp):
 	    for datapath in self._contr.get_all():
 #            datapath = self._contr.switch_get_datapath(123917682135244)
                 datapath = datapath[1]
+                print datapath
                 ofproto = datapath.ofproto
                 parser = datapath.ofproto_parser
 
