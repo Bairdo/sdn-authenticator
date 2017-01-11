@@ -490,10 +490,18 @@ class CapFlow(ABCRyuApp):
             self.ip_to_mac[ip.src] = nw_src
             self.ip_to_mac[ip.dst] = nw_dst
             l2_traffic_is_allowed = True
+        
         if self.authenticate[ip.src] is True and nw_dst == config.GATEWAY_MAC:
            self.ip_to_mac[ip.src] = nw_src
            l2_traffic_is_allowed = True
         if nw_src == config.GATEWAY_MAC and self.authenticate[ip.dst] is True:
+            self.ip_to_mac[ip.dst] = nw_dst
+            l2_traffic_is_allowed = True
+            
+        if self.authenticate[ip.src] is True and nw_dst == config.GATEWAY_MAC2:
+           self.ip_to_mac[ip.src] = nw_src
+           l2_traffic_is_allowed = True
+        if nw_src == config.GATEWAY_MAC2 and self.authenticate[ip.dst] is True:
             self.ip_to_mac[ip.dst] = nw_dst
             l2_traffic_is_allowed = True
 
