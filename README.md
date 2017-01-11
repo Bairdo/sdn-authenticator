@@ -33,13 +33,12 @@ On the "portal":
   
     follow its instructions to install
   - and the webserver for the captive portal.
-      - # apt-get install gunicorn
+      - # apt-get install gunicorn python-pip
+      - # pip install pyrad
       - # copy capflow directory from here to portal.
       - # to start the portal webserver:
-          $ cd capflow/mininet
-          # ./start-captive
-          or just run the command in that script directly.
-
+          # cd into ws
+          # gunicorn rfweb:application -b 0.0.0.0:80
 
 
 Configure:
