@@ -23,10 +23,13 @@ import logging
 import os
 import socket
 import urllib2
+import signal
 
 from webob import Response
 from ryu.app.wsgi import ControllerBase
 
+import lockfile
+import psutil
 
 class UserController2(ControllerBase):
     """The REST class, that accepts requests for the user that is tryin to authenticate using capflow (captive portal)
@@ -34,7 +37,6 @@ class UserController2(ControllerBase):
     def __init__(self, req, link, data, **config):
         super(UserController2, self).__init__(req, link, data, **config)
         self.capflow_interface = data
-        
         min_lvl = logging.DEBUG
         console_handler = logging.StreamHandler()
         console_handler.setLevel(min_lvl)
@@ -50,7 +52,9 @@ class UserController2(ControllerBase):
         self._logging.propagate = logging_config["propagate"]
         self._logging.addHandler(logging_config["handler"])
         
-        self._logging.info("Started CapFlow's REST interface...");
+        self._logging.info("Started CapFlow's REST interface...")
+        self.config_file = os.getenv('CAPFLOW_CONFIG','/etc/ryu/capflow_config.txt')
+        self._contr_pid = -1
 
     @staticmethod
     def register(wsgi):
@@ -84,19 +88,25 @@ class UserController2(ControllerBase):
         self._logging.info("POST received ip: %s, user: %s", ip, user)
         ip = str(ip)
 
-        self.send_user_rules(user, ip)
-	self.capflow_interface.new_client(ip, user)
-
+        #self.send_user_rules(user, ip)
+        #self.capflow_interface.new_client(ip, user)
+        fd = lockfile.lock(self.config_file, os.O_APPEND | os.O_WRONLY)
+        os.write(fd, ip + "," + user + "\n")
+        lockfile.unlock(fd)
+        self.send_signal()
         return Response(status=200)
 
     def put(self, req, ip, user, **_kwargs):
         if not self.validate(ip):
             return Response(status=403)
-        self._logging.info("POST received ip: %s, user: %s", ip, user)
+        self._logging.info("PUT received ip: %s, user: %s", ip, user)
         ip = str(ip)
-        self.send_user_rules(user, ip)
-	self.capflow_interface.new_client(ip, user)
-
+        #self.send_user_rules(user, ip)
+        #self.capflow_interface.new_client(ip, user)
+        fd = lockfile.lock(self.config_file, os.O_APPEND | os.O_WRONLY)
+        os.write(fd, ip + "," + user + "\n")
+        lockfile.unlock(fd)
+        self.send_signal()
         return Response(status=200)
 
     def delete(self, req, ip, user, **_kwargs):
@@ -130,9 +140,17 @@ class UserController2(ControllerBase):
                     rule["rule"]['ip_dst'] = ip
 
                 # rule["rule"]['time_enforce'] = ["0", "0"]
-                req = urllib2.Request('http://127.0.0.1:8080/aclswitch/acl')
-                req.add_header('Content-Type', 'application/json')
+                #req = urllib2.Request('http://127.0.0.1:8080/aclswitch/acl')
+                #req.add_header('Content-Type', 'application/json')
+                #print rule
+                #response = urllib2.urlopen(req, json.dumps(rule))
 
-                response = urllib2.urlopen(req, json.dumps(rule))
-
-                self._logging.info("%s",response)
+                #self._logging.info("%s",response)
+    def send_signal(self):
+        if self._contr_pid < 0:
+            for process in psutil.process_iter():
+                if process.name() == "ryu-manager" and any("controller.py" in s for s in process.cmdline()):
+                    self._contr_pid = process.pid
+                    break
+        
+        os.kill(self._contr_pid,signal.SIGUSR2)  
