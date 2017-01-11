@@ -159,8 +159,8 @@ class Dot1XForwarder(ABCRyuApp):
 
         self._logging.info("Started Dot1XForwarder...");
         
-        self.active_file = os.getenv('DOT1X_ACTIVE_HOSTS', get_sys_prefix() + '/etc/ryu/1x_active_users.txt')
-        self.idle_file = os.getenv('DOT1X_IDLE_HOSTS', get_sys_prefix() + '/etc/ryu/1x_idle_users.txt')
+        self.active_file = os.getenv('DOT1X_ACTIVE_HOSTS','/etc/ryu/1x_active_users.txt')
+        self.idle_file = os.getenv('DOT1X_IDLE_HOSTS','/etc/ryu/1x_idle_users.txt')
         
         #clear the config files
         with open(self.active_file, 'w'): pass
@@ -171,18 +171,18 @@ class Dot1XForwarder(ABCRyuApp):
         with open(filename) as file_:
             for line in file_:
                 currentline = line.split(",")
-                dictionary[currentline[0]] = currentline[1]
+                dictionary[currentline[0]] = currentline[1].rstrip()
         return dictionary
     
     def check_active(self):
         fd = lockfile.lock(self.active_file, os.O_RDWR)
         active_users = self.read_file(self.active_file)
         lockfile.unlock(fd)
-        new_users = { k : active_users[k] for k in set(active_users) - set(self.authenticate) }
+        new_users = { k : active_users[k] for k in set(active_users) - set(self.authenicated_mac_to_user) }
         for mac,usr in new_users.iteritems():
             self.add_new_client(mac,usr)
         
-        log_off_users = { k : self.authenticate[k] for k in set(self.authenticate) - set(active_users) }
+        log_off_users = { k : self.authenicated_mac_to_user[k] for k in set(self.authenicated_mac_to_user) - set(active_users) }
         for mac,usr in log_off_users.iteritems():
             self.log_client_off(mac,usr)
     
@@ -518,6 +518,7 @@ class Dot1XForwarder(ABCRyuApp):
         rule_location = "{:s}/{:s}.rules.json".format(directory, user)
 
         acl_rules = dict()
+        
         with open(rule_location) as user_rules:
             for line in user_rules:
                 if line.startswith("#"):
@@ -525,10 +526,10 @@ class Dot1XForwarder(ABCRyuApp):
                 rule = json.loads(line)
                 if rule["rule"]['ip_src'] == "ip":
                     self._logging.debug("replacing ip_src")
-                    match = OFPMatch(ip_src = ip)
+                    match = OFPMatch(ipv4_src = ip, eth_type = 2048)
                 if rule["rule"]['ip_dst'] == "ip":
                     self._logging.debug("replacing ip_dst")
-                    match = OFPMatch(ip_dst = ip)
+                    match = OFPMatch(ipv4_dst = ip, eth_type = 2048)
                 
                 acl_rules[match] = 1
         self._contr.add_acl_rule(100, acl_rules)
