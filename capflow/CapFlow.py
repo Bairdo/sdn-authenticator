@@ -13,11 +13,15 @@
 # Python
 import collections
 import logging
+import os
+import json
+import signal
 
 # Ryu - OpenFlow
 from ryu.controller.ofp_event import EventOFPPacketIn
 from ryu.controller.ofp_event import EventOFPSwitchFeatures
 from ryu.controller import ofp_event
+from ryu.controller import event
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ipv4
 from ryu.lib.packet import tcp
@@ -26,6 +30,7 @@ from ryu.lib.packet import dhcp
 from ryu.lib.packet import arp
 from ryu.lib.packet import packet
 from ryu.ofproto import ofproto_v1_3
+from ryu.ofproto.ofproto_v1_3_parser import OFPMatch
 
 # Ryu - REST API
 from ryu.app.wsgi import WSGIApplication
@@ -35,6 +40,11 @@ from ryu.controller import dpset
 import config
 from abc_ryu_app import ABCRyuApp
 from rest import UserController2
+import lockfile
+
+class EventCapFlowUserChange(event.EventBase):
+    """Event used to indicate a change in config files"""
+    pass
 
 
 class Proto(object):
@@ -79,10 +89,12 @@ class CapFlow(ABCRyuApp):
 
     _APP_NAME = "CapFlow"
     _EXPECTED_HANDLERS = (EventOFPPacketIn.__name__,
-                          EventOFPSwitchFeatures.__name__)
+                          EventOFPSwitchFeatures.__name__,
+                          EventCapFlowUserChange.__name__)
 
     def __init__(self, contr, *args, **kwargs):
         # super(CapFlow, self).__init__(*args, **kwargs)
+       
         self._contr = contr
         self._table_id_cf = 1
         self._supported = self._verify_contr_handlers()
@@ -90,7 +102,7 @@ class CapFlow(ABCRyuApp):
         self.mac_to_port = collections.defaultdict(dict)
         self.ip_to_mac = collections.defaultdict(dict)
         self.authenticate = collections.defaultdict(dict)
-
+        self.authenticated_ip_to_user = collections.defaultdict(dict)
         self.next_table = 2
 
         self.CRI = CapFlowInterface(self)	
@@ -113,7 +125,12 @@ class CapFlow(ABCRyuApp):
         self._logging.propagate = logging_config["propagate"]
         self._logging.addHandler(logging_config["handler"])
         
-        self._logging.info("Started CapFlow...");
+        self._logging.info("Started CapFlow...")
+        
+        self.config_file = os.getenv('CAPFLOW_CONFIG','/etc/ryu/capflow_config.txt')
+        
+        #clear the config file
+        with open(self.config_file, 'w'): pass
 
     def log_client_off(self, ip, user):
         self._logging.info("Client on ip %s has logged off. removing rules now.", ip)
@@ -145,10 +162,52 @@ class CapFlow(ABCRyuApp):
                                     ofproto.OFPFC_DELETE, 1000, 
                                     match, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY)
 
+        
     def new_client(self, ip, user):
+        directory = os.path.join(os.path.dirname(__file__),"..", "capflow/rules")
+        rule_location = "{:s}/{:s}.rules.json".format(directory, user)
+
+        acl_rules = dict()
+        with open(rule_location) as user_rules:
+            for line in user_rules:
+                if line.startswith("#"):
+                    continue
+                rule = json.loads(line)
+                if rule["rule"]['ip_src'] == "ip":
+                    self._logging.debug("replacing ip_src")
+                    match = OFPMatch(ipv4_src = ip, eth_type = 2048)
+                if rule["rule"]['ip_dst'] == "ip":
+                    self._logging.debug("replacing ip_dst")
+                    match = OFPMatch(ipv4_dst = ip, eth_type = 2048)
+                
+                acl_rules[match] = 1
+        self._contr.add_acl_rule(100, acl_rules)
+        os.kill(os.getpid(),signal.SIGHUP) 
+         
         self.authenticate[ip] = True
+        self.authenticated_ip_to_user[ip] = user
         self._logging.info("Client %s on ip %s has logged on. the rules will be installed shortly", user, ip)
 
+    def read_file(self,filename):
+        dictionary = dict()
+        with open(filename) as file_:
+            for line in file_:
+                currentline = line.split(",")
+                dictionary[currentline[0]] = currentline[1].rstrip()
+        return dictionary
+    
+    def reload_config(self, event):
+        fd = lockfile.lock(self.config_file, os.O_RDWR)
+        new_users = self.read_file(self.config_file)
+        lockfile.unlock(fd)
+        new_users = { k : new_users[k] for k in set(new_users) - set(self.authenticated_ip_to_user) }
+        for ip,user in new_users.iteritems():
+            self.new_client(ip,user)
+        
+        log_off_users = { k : self.authenticated_ip_to_user[k] for k in set(self.authenticated_ip_to_user) - set(new_users) }
+        for ip,user in log_off_users.iteritems():
+            self.log_client_off(ip,user)
+    
     def packet_in(self, event):
         """Process a packet-in event from the controller.
 
@@ -449,7 +508,6 @@ class CapFlow(ABCRyuApp):
                                 in_port=in_port,
                                 actions=[parser.OFPActionOutput(config.GATEWAY_PORT)],
                                 data=msg.data)
-
                             datapath.send_msg(out)
                             return True
                         elif dh.op == 2:
@@ -482,6 +540,7 @@ class CapFlow(ABCRyuApp):
     def is_l2_traffic_allowed(self, nw_src, nw_dst, ip):
         """Returns True if the two mac address are allowed to communicate.
         """
+        
         l2_traffic_is_allowed = False
         for entry in config.WHITELIST:
             if nw_src == entry[0] and nw_dst == entry[1]:
