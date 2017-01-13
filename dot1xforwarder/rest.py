@@ -86,11 +86,9 @@ class UserController(ControllerBase):
         os.write(fd, mac + "," + str(retrans) + "\n")
         lockfile.unlock(fd)
         
-        
-        
         self._logging.info("retrans: %s, MAC: %s, user: %s", str(retrans), mac, user)
         self.send_signal()
-        self.dpList.idle_mac(mac, retrans)
+        #self.dpList.idle_mac(mac, retrans)
 
     @staticmethod
     def validate(address):
@@ -113,8 +111,7 @@ class UserController(ControllerBase):
         os.kill(self._contr_pid,signal.SIGUSR1)                
         
     def post(self, req, mac, user, **_kwargs):
-        self.dpList.new_client(mac, user)
-        print os.getcwd()
+        #self.dpList.new_client(mac, user)
         fd = lockfile.lock(self.active_file, os.O_APPEND | os.O_RDWR)
         os.write(fd, mac + "," + user + "\n")
         lockfile.unlock(fd)
@@ -126,9 +123,29 @@ class UserController(ControllerBase):
         # TODO
         return Response(status=200)
 
+    def read_file(self,filename, mac, user):
+        to_write = ""
+        file_changed = False
+        with open(filename) as file_:
+            for line in file_:
+                mac1, user1= line.split(",")
+                if mac != mac1:
+                    to_write += line
+                else:
+                    file_changed = True
+
+        return file_changed, to_write
+    
     def delete(self, req, mac, user, **_kwargs):
         # TODO
         print "TODO HTTP Delete : " + user + " " + mac
-        self.dpList.log_client_off(mac, user)
+        fd = lockfile.lock(self.active_file, os.O_APPEND | os.O_WRONLY)
+        changed, to_write = self.read_file(self.active_file,  mac, user)
+        if changed:
+            os.ftruncate(fd,0)
+            os.write(fd, to_write)
+        lockfile.unlock(fd)
+        self.send_signal()
+        #self.dpList.log_client_off(mac, user)
         self._logging.info("User %s at mac %s should now logged off.", user, mac)
         return Response(status=200)

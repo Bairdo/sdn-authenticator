@@ -192,7 +192,6 @@ class Dot1XForwarder(ABCRyuApp):
         os.ftruncate(fd,0)
         lockfile.unlock(fd)
         for mac,retry in idle_users.iteritems():
-            print "use portal +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
             self.make_client_use_portal(mac,retry)
         
     def reload_config(self,event):
@@ -269,8 +268,10 @@ class Dot1XForwarder(ABCRyuApp):
             self._contr.add_flow(d, R2_PRIORITY+4, match, inst, 0, self._table_id_1x, cookie=0x06)
 
     def log_client_off(self, mac, user):
-        del self.authenicated_mac_to_user[mac]
-        del self.authed_ip_by_mac[mac]
+        if mac in self.authenicated_mac_to_user:
+            del self.authenicated_mac_to_user[mac]
+        if mac in self.authed_ip_by_mac:
+            del self.authed_ip_by_mac[mac]
 
         for datapath in self._contr.get_all():
             datapath = datapath[1]
@@ -438,9 +439,9 @@ class Dot1XForwarder(ABCRyuApp):
     def is_mac_ip_authed(self, mac):
         """Is the mac address authenticated (returns true if they are)
         """
-	self._logging.debug("authed-mac-to-user %s", self.authenicated_mac_to_user)
+        self._logging.debug("authed-mac-to-user %s", self.authenicated_mac_to_user)
         if self.authenicated_mac_to_user[mac] != {}:
-	    self._logging.debug("authed-ip-by-mac %s", self.authed_ip_by_mac)
+            self._logging.debug("authed-ip-by-mac %s", self.authed_ip_by_mac)
             if self.authed_ip_by_mac[mac] == {}:
                 return True
             return False
@@ -453,6 +454,8 @@ class Dot1XForwarder(ABCRyuApp):
         """If we learn the IP address of an already authenticated MAC then remove the rules already installed.
         """
         # if mac is authenticated but not already dealt with. add the rules
+        
+        print "authenticate IP"
         if self.is_mac_ip_authed(mac):
             self.authed_ip_by_mac[mac] = ip
             self.add_ip_authenticated_rules(datapath, parser, mac, ip)

@@ -110,20 +110,43 @@ class UserController2(ControllerBase):
         return Response(status=200)
 
     def delete(self, req, ip, user, **_kwargs):
-        if self.capflow_interface.is_authed(ip) is False:
-            print "user already logged off"
-            return Response(status=200)
-
+        #if self.capflow_interface.is_authed(ip) is False:
+            #print "user already logged off"
+            #return Response(status=200)
+        
+        
         print "HTTP Delete : " + user + " " + ip
-	# todo remove the flows somehow.
+        # todo remove the flows somehow.
 
-	self.capflow_interface.log_client_off(ip, user)
-
+        #self.capflow_interface.log_client_off(ip, user)
+        
+        fd = lockfile.lock(self.config_file, os.O_APPEND | os.O_WRONLY)
+        changed, to_write = self.read_file(self.config_file, ip, user)
+        if changed:
+            os.ftruncate(fd,0)
+            os.write(fd, to_write)
+        lockfile.unlock(fd)
+        self.send_signal()
+        
         return Response(status=200)
 
+
+    def read_file(self,filename, ip, user):
+        to_write = ""
+        file_changed = False
+        with open(filename) as file_:
+            for line in file_:
+                ip1, user1= line.split(",")
+                if ip != ip1:
+                    to_write += line
+                else:
+                    file_changed = True
+
+        return file_changed, to_write
+        
     def send_user_rules(self, user, ip):
         # get rules for user.
-	directory = os.path.join(os.path.dirname(__file__), "rules")
+        directory = os.path.join(os.path.dirname(__file__), "rules")
         rule_location = "{:s}/{:s}.rules.json".format(directory, user)
 
         # for each rule in user.rules
@@ -133,7 +156,7 @@ class UserController2(ControllerBase):
                 if line.startswith("#"):
                     continue
                 rule = json.loads(line)
-		self._logging.info("rule: %s", rule)
+                self._logging.info("rule: %s", rule)
                 if rule["rule"]['ip_src'] == "ip":
                     rule["rule"]["ip_src"] = ip
                 if rule["rule"]['ip_dst'] == "ip":
