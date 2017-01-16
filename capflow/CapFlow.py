@@ -220,7 +220,6 @@ class CapFlow(ABCRyuApp):
             self._contr.add_flow(datapath,
                                  2001,
                                  parser.OFPMatch(
-                                     #eth_src=nw_dst,
                                      eth_dst=nw_src,
                                      eth_type=Proto.ETHER_IP,
                                      ip_proto=Proto.IP_UDP,
@@ -252,15 +251,6 @@ class CapFlow(ABCRyuApp):
                                  self._table_id_cf,
                                  msg=msg, in_port=in_port, idle_timeout=30, packet_out=False
                                 )
-	    # is this actually needed.
-            '''out = parser.OFPPacketOut(
-                datapath=datapath,
-                buffer_id=msg.buffer_id,
-                in_port=in_port,
-                actions=[parser.OFPActionOutput(config.GATEWAY_PORT)],
-                data=msg.data)
-
-            datapath.send_msg(out)'''
 
         def install_http_nat(nw_src, nw_dst, ip_src, ip_dst, tcp_src, tcp_dst):
             """Adds flows that perform the http nat operation that redirects

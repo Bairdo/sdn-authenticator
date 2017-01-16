@@ -80,13 +80,11 @@ class UserController2(ControllerBase):
         user = authJSON['user']
 
         if self.capflow_interface.is_authed(ip) is False:
-            print "user not logged in"
+            self._logging.info("user on %s not logged in", ip)
             return Response(status=200)
 
-        print "HTTP Delete : " + user + " " + ip
-        print authJSON
 	self.capflow_interface.log_client_off(ip, user)
-
+	self._logging.info("user on %s logged off", ip)
         return Response(status=200)
 
     def authenticate_post(self, req, **kwargs):
@@ -94,7 +92,7 @@ class UserController2(ControllerBase):
             authJSON = json.loads(req.body)
         except:
             return Response(status=400, body="Unable to parse JSON")
-        print authJSON
+
         self._logging.info("POST with JSON, ip: %s, user: %s", authJSON['ip'], authJSON['user'])
         
 	self.send_user_rules(authJSON['user'], authJSON['ip'])

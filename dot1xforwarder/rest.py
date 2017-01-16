@@ -65,7 +65,7 @@ class UserController(ControllerBase):
             authJSON = json.loads(req.body)
         except:
             return Response(status=400, body="Unable to parse JSON")
-        print authJSON
+       
         self._logging.info("POST with JSON, MAC: %s, User: %s", authJSON['mac'], authJSON['user'])
         self.dpList.new_client(authJSON['mac'], authJSON['user'])
         return Response(status=200)
@@ -103,7 +103,7 @@ class UserController(ControllerBase):
        # TODO
         user = authJSON['user']
         mac = authJSON['mac']
-        print "TODO HTTP Delete : " + user + " " + mac
+      
         self.dpList.log_client_off(mac, user)
         self._logging.info("User %s at mac %s should now logged off.", user, mac)
         return Response(status=200)
