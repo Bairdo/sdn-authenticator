@@ -214,16 +214,17 @@ class CapFlow(ABCRyuApp):
         """
         #obtain a lock to the file so that no modifications are made while we process it
         fd = lockfile.lock(self.config_file, os.O_RDWR)
-        new_users = self.read_file(self.config_file)
+        users_from_file = self.read_file(self.config_file)
+        #release the lock
         lockfile.unlock(fd)
         
         #check for new users by taking the difference of the users from the file and the authenticated users
-        new_users = { k : new_users[k] for k in set(new_users) - set(self.authenticated_ip_to_user) }
+        new_users = { k : users_from_file[k] for k in set(users_from_file) - set(self.authenticated_ip_to_user) }
         for ip,user in new_users.iteritems():
             self.new_client(ip,user)
         
         #check for for the log off of users by seeing if the ip,user has been removed from the file
-        log_off_users = { k : self.authenticated_ip_to_user[k] for k in set(self.authenticated_ip_to_user) - set(new_users) }
+        log_off_users = { k : self.authenticated_ip_to_user[k] for k in set(self.authenticated_ip_to_user) - set(users_from_file) }
         for ip,user in log_off_users.iteritems():
             self.log_client_off(ip,user)
     
