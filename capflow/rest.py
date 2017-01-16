@@ -52,19 +52,15 @@ class UserController2(ControllerBase):
         
         self._logging.info("Started CapFlow's REST interface...");
 
+       
+
     @staticmethod
-    def register(wsgi):
-        route_name = 'authenticate'
-        uri = '/v1.0/authenticate'
-        uri += '/ip={ip}&user={user}'
+    def register(wsgi):     
         s = wsgi.mapper.submapper(controller=UserController2)
-        s.connect(route_name, uri, action='post',
-                  conditions=dict(method=['POST']))
-        s.connect(route_name, uri, action='put',
-                  conditions=dict(method=['PUT']))
-        s.connect(route_name, uri, action='delete',
-                  conditions=dict(method=['DELETE']))
-                  
+
+        s.connect('auth', '/v1.1/authenticate/auth', action="authenticate_post", conditions=dict(method=['POST']))
+        s.connect('auth', '/v1.1/authenticate/auth', action="authenticate_delete", conditions=dict(method=['DELETE']))
+
     @staticmethod
     def validate(address):
         """is the ip address given an actual IP address.
@@ -75,41 +71,34 @@ class UserController2(ControllerBase):
         except:
             return False
 
-    def post(self, req, ip, user, **_kwargs):
-        if not self.validate(ip):
-            return Response(status=403)
-        # if self.authenticate.get(ip, False) == True:
-        #    print "IP already authenticated."
-        #    return Response(status=200)
-        self._logging.info("POST received ip: %s, user: %s", ip, user)
-        ip = str(ip)
+    def authenticate_delete(self, req, **_kwargs):
+        try:
+            authJSON = json.loads(req.body)
+        except:
+            return Response(status=400, body="Unable to parse JSON")
+        ip = authJSON['ip']
+        user = authJSON['user']
 
-        self.send_user_rules(user, ip)
-	self.capflow_interface.new_client(ip, user)
-
-        return Response(status=200)
-
-    def put(self, req, ip, user, **_kwargs):
-        if not self.validate(ip):
-            return Response(status=403)
-        self._logging.info("POST received ip: %s, user: %s", ip, user)
-        ip = str(ip)
-        self.send_user_rules(user, ip)
-	self.capflow_interface.new_client(ip, user)
-
-        return Response(status=200)
-
-    def delete(self, req, ip, user, **_kwargs):
         if self.capflow_interface.is_authed(ip) is False:
-            print "user already logged off"
+            self._logging.info("user on %s not logged in", ip)
             return Response(status=200)
 
-        print "HTTP Delete : " + user + " " + ip
-	# todo remove the flows somehow.
-
 	self.capflow_interface.log_client_off(ip, user)
-
+	self._logging.info("user on %s logged off", ip)
         return Response(status=200)
+
+    def authenticate_post(self, req, **kwargs):
+        try:
+            authJSON = json.loads(req.body)
+        except:
+            return Response(status=400, body="Unable to parse JSON")
+
+        self._logging.info("POST with JSON, ip: %s, user: %s", authJSON['ip'], authJSON['user'])
+        
+	self.send_user_rules(authJSON['user'], authJSON['ip'])
+	self.capflow_interface.new_client(authJSON['ip'], authJSON['user'])
+
+	return Response(status=200)
 
     def send_user_rules(self, user, ip):
         # get rules for user.
