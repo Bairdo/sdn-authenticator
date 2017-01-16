@@ -111,7 +111,7 @@ class Dot1XForwarder(ABCRyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     _CONTEXTS = {
 #        'dpset': dpset.DPSet,
-        'wsgi': WSGIApplication
+        #'wsgi': WSGIApplication
     }
 
     _APP_NAME = "Dot1XForwarder"
@@ -139,8 +139,8 @@ class Dot1XForwarder(ABCRyuApp):
         self.dpList = DpList(self, self._contr, self._table_id_1x,
                              self.blacklist_table, self.l2_switch_table)
 
-        self._contr._wsgi.registory['UserController'] = self.dpList
-        UserController.register(self._contr._wsgi)
+        #self._contr._wsgi.registory['UserController'] = self.dpList
+        #UserController.register(self._contr._wsgi)
         
         min_lvl = logging.DEBUG
         console_handler = logging.StreamHandler()
@@ -180,6 +180,7 @@ class Dot1XForwarder(ABCRyuApp):
         lockfile.unlock(fd)
         new_users = { k : active_users[k] for k in set(active_users) - set(self.authenicated_mac_to_user) }
         for mac,usr in new_users.iteritems():
+            print "new mac " + mac + " user: " + usr
             self.add_new_client(mac,usr)
         
         log_off_users = { k : self.authenicated_mac_to_user[k] for k in set(self.authenicated_mac_to_user) - set(active_users) }

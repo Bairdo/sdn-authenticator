@@ -84,7 +84,7 @@ class CapFlow(ABCRyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     _CONTEXTS = {
         'dpset': dpset.DPSet,
-        'wsgi': WSGIApplication
+        #'wsgi': WSGIApplication
     }
 
     _APP_NAME = "CapFlow"
@@ -107,8 +107,8 @@ class CapFlow(ABCRyuApp):
 
         self.CRI = CapFlowInterface(self)	
 
-        self._contr._wsgi.registory['UserController2'] = self.CRI
-        UserController2.register(self._contr._wsgi)
+        #self._contr._wsgi.registory['UserController2'] = self.CRI
+        #UserController2.register(self._contr._wsgi)
         
         min_lvl = logging.DEBUG
         console_handler = logging.StreamHandler()
@@ -131,6 +131,7 @@ class CapFlow(ABCRyuApp):
         
         #clear the config file
         with open(self.config_file, 'w'): pass
+        
 
     def log_client_off(self, ip, user):
         self._logging.info("Client on ip %s has logged off. removing rules now.", ip)
@@ -164,6 +165,7 @@ class CapFlow(ABCRyuApp):
 
         
     def new_client(self, ip, user):
+        self._logging.info("New client has logged on. IP:%s user: %s", ip,user)
         directory = os.path.join(os.path.dirname(__file__),"..", "capflow/rules")
         rule_location = "{:s}/{:s}.rules.json".format(directory, user)
 
