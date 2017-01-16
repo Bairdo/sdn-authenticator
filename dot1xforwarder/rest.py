@@ -24,7 +24,6 @@ import socket
 
 from webob import Response
 from ryu.app.wsgi import ControllerBase
-from ryu.app.wsgi import route
 
 class UserController(ControllerBase):
     """The REST class, that accepts requests for the user that is tryin to authenticate using 802.1X
@@ -52,27 +51,15 @@ class UserController(ControllerBase):
 
     @staticmethod
     def register(wsgi):
-        route_name = 'authenticate'
-        uri = '/v1.0/authenticate'
-        uri += '/mac={mac}&user={user}'
-        s = wsgi.mapper.submapper(controller=UserController)
-#        s.connect(route_name, uri, action='post',
- #                 conditions=dict(method=['POST']))
-        s.connect(route_name, uri, action='put',
-                  conditions=dict(method=['PUT']))
-        s.connect(route_name, uri, action='delete',
-                  conditions=dict(method=['DELETE']))
 
-        route_name = 'idle'
-        uri = '/v1.0/idle'
-        uri += '/retrans={retrans}&mac={mac}&user={user}'
         s = wsgi.mapper.submapper(controller=UserController)
-        s.connect(route_name, uri, action='idle_post',
+        s.connect('idle', '/idle', action='idle_post',
                   conditions=dict(method=['POST']))
 
         s.connect('auth', '/authenticate/auth', action="authenticate_post", conditions=dict(method=['POST']))
+        s.connect('auth', '/authenticate/auth', action="authenticate_delete", conditions=dict(method=['DELETE']))
 
-#    @route("authenticate", '/authenticate/auth', methods=["POST"])
+
     def authenticate_post(self, req, **kwargs):
         try:
             authJSON = json.loads(req.body)
@@ -84,11 +71,17 @@ class UserController(ControllerBase):
         return Response(status=200)
       
 
-
-
-    def idle_post(self, req, retrans, mac, user, **_kwargs):
+    def idle_post(self, req, **_kwargs):
         """the REST endpoint for an HTTP POST when the client has been idle.
         """
+        try:
+            authJSON = json.loads(req.body)
+        except:
+            return Response(status=400, body="Unable to parse JSON")
+        mac = authJSON['mac']
+        user = authJSON['user']
+        retrans = authJSON['retrans']
+
         self._logging.info("retrans: %s, MAC: %s, user: %s", str(retrans), mac, user)
         self.dpList.idle_mac(mac, retrans)
 
@@ -102,17 +95,14 @@ class UserController(ControllerBase):
         except:
             return False
 
-    def post1(self, req, mac, user, **_kwargs):
-        self.dpList.new_client(mac, user)
-        self._logging.info("POST received for MAC: %s, User: %s", mac, user)
-        return Response(status=200)
-
-    def put(self, req, mac, user, **_kwargs):
-        # TODO
-        return Response(status=200)
-
-    def delete(self, req, mac, user, **_kwargs):
-        # TODO
+    def authenticate_delete(self, req, **_kwargs):
+        try:
+            authJSON = json.loads(req.body)
+        except:
+            return Response(status=400, body="Unable to parse JSON")
+       # TODO
+        user = authJSON['user']
+        mac = authJSON['mac']
         print "TODO HTTP Delete : " + user + " " + mac
         self.dpList.log_client_off(mac, user)
         self._logging.info("User %s at mac %s should now logged off.", user, mac)
