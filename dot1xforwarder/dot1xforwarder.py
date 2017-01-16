@@ -175,27 +175,41 @@ class Dot1XForwarder(ABCRyuApp):
         return dictionary
     
     def check_active(self):
+        """Check if the active hosts have changed        
+        """
+        
+        #obtain a lock to the file so that no modifications are made while we process it
         fd = lockfile.lock(self.active_file, os.O_RDWR)
         active_users = self.read_file(self.active_file)
+        #release the lock
         lockfile.unlock(fd)
+        
+        #check for new users by taking the difference of the users from the file and the authenticated users
         new_users = { k : active_users[k] for k in set(active_users) - set(self.authenicated_mac_to_user) }
         for mac,usr in new_users.iteritems():
             print "new mac " + mac + " user: " + usr
             self.add_new_client(mac,usr)
         
+        #check for for the log off of users by seeing if the mac,user has been removed from the file
         log_off_users = { k : self.authenicated_mac_to_user[k] for k in set(self.authenicated_mac_to_user) - set(active_users) }
         for mac,usr in log_off_users.iteritems():
             self.log_client_off(mac,usr)
     
     def check_idle(self):
+        """ Check if there are any new idle hosts that need to be processed        
+        """
         fd = lockfile.lock(self.idle_file, os.O_RDWR)
         idle_users = self.read_file(self.idle_file)
+        #clear the file since we have read in the idle hosts already
         os.ftruncate(fd,0)
         lockfile.unlock(fd)
+        
         for mac,retry in idle_users.iteritems():
             self.make_client_use_portal(mac,retry)
         
     def reload_config(self,event):
+        """Reload the config files, both the active hosts and the idle hosts 
+        """
         self.check_active()
         self.check_idle()
                 

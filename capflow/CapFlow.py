@@ -165,6 +165,11 @@ class CapFlow(ABCRyuApp):
 
         
     def new_client(self, ip, user):
+        """ Authenticate the new client
+        
+        :param ip: the ip address of the client
+        :param user: the username of the client
+        """
         self._logging.info("New client has logged on. IP:%s user: %s", ip,user)
         directory = os.path.join(os.path.dirname(__file__),"..", "capflow/rules")
         rule_location = "{:s}/{:s}.rules.json".format(directory, user)
@@ -177,20 +182,24 @@ class CapFlow(ABCRyuApp):
                 rule = json.loads(line)
                 if rule["rule"]['ip_src'] == "ip":
                     self._logging.debug("replacing ip_src")
-                    match = OFPMatch(ipv4_src = ip, eth_type = 2048)
+                    match = OFPMatch(ipv4_src = ip, eth_type = 2048) # allow IP traffic
                 if rule["rule"]['ip_dst'] == "ip":
                     self._logging.debug("replacing ip_dst")
                     match = OFPMatch(ipv4_dst = ip, eth_type = 2048)
                 
                 acl_rules[match] = 1
         self._contr.add_acl_rule(100, acl_rules)
-        os.kill(os.getpid(),signal.SIGHUP) 
+        os.kill(os.getpid(),signal.SIGHUP) #tell faucet to reload
          
         self.authenticate[ip] = True
         self.authenticated_ip_to_user[ip] = user
         self._logging.info("Client %s on ip %s has logged on. the rules will be installed shortly", user, ip)
 
     def read_file(self,filename):
+        """ Read the file and store the contents in a dictionary
+        
+        :param filename: the name of the file to open
+        """        
         dictionary = dict()
         with open(filename) as file_:
             for line in file_:
@@ -199,13 +208,21 @@ class CapFlow(ABCRyuApp):
         return dictionary
     
     def reload_config(self, event):
+        """ Reloads the config file to see if there are new users or if users have logged off
+        
+        :param event: The event that triggered the reloading of config        
+        """
+        #obtain a lock to the file so that no modifications are made while we process it
         fd = lockfile.lock(self.config_file, os.O_RDWR)
         new_users = self.read_file(self.config_file)
         lockfile.unlock(fd)
+        
+        #check for new users by taking the difference of the users from the file and the authenticated users
         new_users = { k : new_users[k] for k in set(new_users) - set(self.authenticated_ip_to_user) }
         for ip,user in new_users.iteritems():
             self.new_client(ip,user)
         
+        #check for for the log off of users by seeing if the ip,user has been removed from the file
         log_off_users = { k : self.authenticated_ip_to_user[k] for k in set(self.authenticated_ip_to_user) - set(new_users) }
         for ip,user in log_off_users.iteritems():
             self.log_client_off(ip,user)
@@ -602,6 +619,11 @@ class CapFlow(ABCRyuApp):
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
                                              actions)]
         self._contr.add_flow(datapath, 1, match, inst, 0, self._table_id_cf)
+        
+        match = parser.OFPMatch(eth_type=2048, ipv4_dst=config.AUTH_SERVER_IP, ip_proto=6, tcp_dst=80)
+        actions = [parser.OFPActionSetField(eth_dst=config.AUTH_SERVER_MAC),parser.OFPActionOutput(port=config.AUTH_SERVER_PORT)] 
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,actions)]
+        self._contr.add_flow(datapath, 50001, match, inst, 0, self._table_id_cf)
 
         # So we don't need to learn auth server location
         # TODO: this assumes we are controlling only a single switch!
