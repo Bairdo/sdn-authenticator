@@ -12,52 +12,19 @@ The **Portal** acts as an authenticator for the 802.1X protocol and a webserver 
 
 The **Internet** provides access to the Internet and at this stage DHCP and DNS servers (which are used by the captive portal).
 
-The **Controller** is the [Ryu](http://osrg.github.io/ryu/) OpenFlow controller.
+The **Controller** is the [Ryu](http://osrg.github.io/ryu/) OpenFlow controller. As part of the controller, an HTTP server runs on the same machine so that the controller and the portal may communicate. 
 
 The **OpenFlow Switch** is an OpenFlow 1.3 switch, we have used a [Northbound Networks Zodiac FX](http://northboundnetworks.com), [Allied Telesis ATx930](http://www.alliedtelesis.com/products/x930-series), and [OpenVSwitch](http://openvswitch.org).
 
 
 
 
-
 ## Install:
 
-### Controller:
-```$ pip install ryu
-
-$ git clone https://github.com/Bairdo/sdn-authenticator.git
-
-$ git clone https://github.com/Bairdo/ACLSwitch-1.git
-```
+### Controller
+Follow the installation with CapFlow and ACLSwitch Controller in https://github.com/libunamari/faucet/blob/master/README.rst
 
 Follow the dependency steps in https://github.com/Bairdo/ACLSwitch-1
-
-Change the table that [Ryu_Application/l2switch/l2switch.py](https://github.com/Bairdo/ACLSwitch-1/blob/master/Ryu_Application/l2switch/l2switch.py#L62) "self._table_id_l2" uses ~line 62 to = 4.
-
-Change the tables that [Ryu_Application/aclswitch/aclswitch.py]() ~line 86
-  so that:
-
-      self._table_id_blacklist = 2
-
-      self._table_id_whitelist = 3
-
-      self._table_id_next = 4
-
-In [Ryu_Application/controller.py](https://github.com/Bairdo/ACLSwitch-1/blob/master/Ryu_Application/controller.py#L58) add
-```
-self._register_app(Dot1Forwarder(self))
-self._register_app(CapFlow(self)
-```
-
-and the imports in the top section of file
-```
-from authenticators.dot1xforwarder.dot1xforwarder import Dot1XForwarder
-from authenticators.capflow.CapFlow import CapFlow
-```
-
-change directory into ACLSwitch/Ryu_Application
-
-$ ln -s ~/sdn-authenticator/ authenticators
 
 ####Configure:
 
@@ -67,6 +34,20 @@ dot1xforwarder/dot1xforwarder.py lines 45-47 have the switch ports that are used
 
 Run:
 $ ryu-manager <path to>/Ryu_applicaiton/controller.py
+
+#### HTTP Server
+The server uses files and signals to indicate a change has happened with the users. Dot1xforwarder has two config files, one for active hosts and the other for idle hosts. Both files are CSV. As for CapFlow, there is only one config file: the currently authenticated users. The server sends a signal to the controller when a change occurs
+
+The configuratiion filenames and location can be modified by setting environment variables. This can be set by the command: 
+
+```
+export CAPFLOW_CONFIG=/home/ubuntu/capflow_config.txt
+```
+
+|                | Default config filename                                 | Environment Variable                | Signal  |
+|----------------|---------------------------------------------------------|-------------------------------------|---------|
+| Capflow        | /etc/ryu/capflow_config.txt                             | CAPFLOW_CONFIG                      | SIGUSR2 |
+| Dot1xforwarder | /etc/ryu/1x_active_users.txt /etc/ryu/1x_idle_users.txt | DOT1X_ACTIVE_HOSTS DOT1X_IDLE_HOSTS | SIGUSR1 |
 
 
 ### Portal:
