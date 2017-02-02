@@ -256,14 +256,16 @@ class Dot1XForwarder(ABCRyuApp):
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
                                     ipv4_src=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+1, match, inst, 0, self._table_id_1x, cookie=0x03)
 
             # if dst is local ip, and new ip. and src is on the internet
             match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
                                     ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+2, match, inst, 0, self._table_id_1x, cookie=0x04)
 
             # if both dst and src is local ip, and new ip. might need a special case if both local.
@@ -271,14 +273,16 @@ class Dot1XForwarder(ABCRyuApp):
                                     ipv4_src=(NETWORK_ADDRESS, NETMASK),
                                     ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+3, match, inst, 0, self._table_id_1x, cookie=0x05)
 
             match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
                                     ipv4_src=(NETWORK_ADDRESS, NETMASK),
                                     ipv4_dst=(NETWORK_ADDRESS, NETMASK))
             actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
             self._contr.add_flow(d, R2_PRIORITY+4, match, inst, 0, self._table_id_1x, cookie=0x06)
 
     def log_client_off(self, mac, user):
@@ -411,10 +415,11 @@ class Dot1XForwarder(ABCRyuApp):
         udp_pkt = pkt.get_protocol(udp.udp)
 
         # if it is a DHCP packet then forward it appropriatly.
+        # this makes the assumption that the mac is already authorised
         if udp_pkt is not None:
             # fix this.
             if udp_pkt.dst_port == Proto.DHCP_SERVER_DST:
-	        self._logging.info("DHCP packet from client, sending to server")
+	        self._logging.debug("DHCP packet from client, sending to faucet table")
 
                 out = parser.OFPPacketOut(
                     datapath=datapath,
@@ -425,7 +430,7 @@ class Dot1XForwarder(ABCRyuApp):
                 datapath.send_msg(out)
 		return
             elif udp_pkt.dst_port == Proto.DHCP_CLIENT_DST:
-		self._logging.info('DHCP packet from server, sending to the "access port"')
+		self._logging.info('DHCP packet from server, sending to faucet table"')
                 out = parser.OFPPacketOut(
                     datapath=datapath,
                     actions=[parser.OFPInstructionGotoTable(self.l2_switch_table)],
@@ -434,9 +439,6 @@ class Dot1XForwarder(ABCRyuApp):
                     data=event.msg.data)
                 datapath.send_msg(out)
 		return
-            #else:
-                #self._logging.warn("dont know how to deal with dhcp packet with unknown udp dest port")
-            #return
 
         self.do_mac_ip_auth(datapath, parser, ofproto, eth.src, ip_pkt.src)
         self.do_mac_ip_auth(datapath, parser, ofproto, eth.dst, ip_pkt.dst)
@@ -459,8 +461,6 @@ class Dot1XForwarder(ABCRyuApp):
                 return True
             return True
         # the mac address could be not authenticated.
-        # OR (mac could be authed and ip has already been dealt with).
-        # TODO how should we deal with this?
         return False
 
     def do_mac_ip_auth(self, datapath, parser, ofproto, mac, ip):
