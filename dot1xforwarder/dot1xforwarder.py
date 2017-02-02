@@ -48,9 +48,8 @@ from faucet.util import get_sys_prefix
 import lockfile
 
 R2_PRIORITY = 5100
-DHCP_SERVER_PORT = 3
 ACCESS_PORT = 4
-PORTAL_PORT = 1
+PORTAL_PORT = 2
 
 NETMASK = "255.255.255.0"
 NETWORK_ADDRESS = "10.0.0.0"
@@ -350,17 +349,16 @@ class Dot1XForwarder(ABCRyuApp):
         self.datapaths.append(datapath)
 
         # all eap traffic goes to the portal nuc.
-        match = parser.OFPMatch(in_port=PORTAL_PORT, eth_type=Proto.EAPOL)
-        actions = [parser.OFPActionOutput(ACCESS_PORT)]
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
+        match = parser.OFPMatch(eth_type=Proto.EAPOL)
+        inst = [parser.OFPInstructionGotoTable(self.l2_switch_table)]
+
         self._contr.add_flow(datapath, 10000, match, inst, 0, self._table_id_1x, cookie=0x08)
 
-        match = parser.OFPMatch(in_port=ACCESS_PORT, eth_type=Proto.EAPOL)
-        actions = [parser.OFPActionOutput(PORTAL_PORT)]
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
-        self._contr.add_flow(datapath, 10000, match, inst, 0, self._table_id_1x, cookie=0x09)
+#        match = parser.OFPMatch(eth_type=Proto.EAPOL)
+#	inst = [parser.OFPInstructionGotoTable(self.l2_switch_table)]
+
+
+#        self._contr.add_flow(datapath, 10000, match, inst, 0, self._table_id_1x, cookie=0x09)
 
         # drop unmatched traffic (this will be from internet)
         match = parser.OFPMatch()
@@ -371,16 +369,16 @@ class Dot1XForwarder(ABCRyuApp):
         
         # all traffic goes to the portal nuc. this is so we can trigger 802.1x.
         # which hostapd does by listening for dhcp only
-        match = parser.OFPMatch(in_port=PORTAL_PORT)
-        actions = [parser.OFPActionOutput(ACCESS_PORT)]
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
-        self._contr.add_flow(datapath, 1000, match, inst, 0, self._table_id_1x, cookie=0x0b)
+#        match = parser.OFPMatch(in_port=PORTAL_PORT)
+#        actions = [parser.OFPActionOutput(ACCESS_PORT)]
+#        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+#                                             actions)]
+#        self._contr.add_flow(datapath, 1000, match, inst, 0, self._table_id_1x, cookie=0x0b)
 
-        match = parser.OFPMatch(in_port=ACCESS_PORT)
-        actions = [parser.OFPActionOutput(PORTAL_PORT)]
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
+#        match = parser.OFPMatch(in_port=ACCESS_PORT)
+#        actions = [parser.OFPActionOutput(PORTAL_PORT)]
+#        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+#                                             actions)]
         self._contr.add_flow(datapath, 1000, match, inst, 0, self._table_id_1x, cookie=0x0c)
 
     def packet_in(self, event):
@@ -420,7 +418,7 @@ class Dot1XForwarder(ABCRyuApp):
 
                 out = parser.OFPPacketOut(
                     datapath=datapath,
-                    actions=[parser.OFPActionOutput(DHCP_SERVER_PORT)],
+                    actions=[parser.OPFInstructionGotoTable(self.l2_switch_table)],
                     in_port=event.msg.match['in_port'],
                     buffer_id=0xffffffff,
                     data=event.msg.data)
@@ -430,7 +428,7 @@ class Dot1XForwarder(ABCRyuApp):
 		self._logging.info('DHCP packet from server, sending to the "access port"')
                 out = parser.OFPPacketOut(
                     datapath=datapath,
-                    actions=[parser.OFPActionOutput(ACCESS_PORT)],
+                    actions=[parser.OFPInstructionGotoTable(self.l2_switch_table)],
 		    in_port=event.msg.match['in_port'],
                     buffer_id=0xffffffff,
                     data=event.msg.data)
@@ -459,7 +457,7 @@ class Dot1XForwarder(ABCRyuApp):
             self._logging.debug("authed-ip-by-mac %s", self.authed_ip_by_mac)
             if self.authed_ip_by_mac[mac] == {}:
                 return True
-            return False
+            return True
         # the mac address could be not authenticated.
         # OR (mac could be authed and ip has already been dealt with).
         # TODO how should we deal with this?
