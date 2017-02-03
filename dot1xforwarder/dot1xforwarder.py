@@ -48,8 +48,6 @@ from faucet.util import get_sys_prefix
 import lockfile
 
 R2_PRIORITY = 5100
-ACCESS_PORT = 4
-PORTAL_PORT = 2
 
 NETMASK = "255.255.255.0"
 NETWORK_ADDRESS = "10.0.0.0"
@@ -222,68 +220,96 @@ class Dot1XForwarder(ABCRyuApp):
             ofproto = d.ofproto
             parser = d.ofproto_parser
 
-            # allow all level 2 traffic through let l2switch handle the where.
-            # this rule will allow arp and dhcp to go through.
-            match = parser.OFPMatch(eth_dst=mac)
-            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
-            inst = [actions]
-            self._contr.add_flow(d, 5001, match, inst, 0, self._table_id_1x, cookie=0x01)
+            self.remove_portal_fallback_rules(d, mac)
+            self.add_arp_dhcp_rules(d, parser, ofproto, mac)
+            self.add_ip_learn_rules(d, parser, ofproto, mac)
 
-            match = parser.OFPMatch(eth_src=mac)
-            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
-            inst = [actions]
-            self._contr.add_flow(d, 5002, match, inst, 0, self._table_id_1x, cookie=0x02)
-            match = parser.OFPMatch(eth_dst=mac)
+    def add_arp_dhcp_rules(self, d, parser, ofproto, mac):
+        # allow all level 2 traffic through let l2switch handle the where.
+        # this rule will allow arp and dhcp to go through.
+        match = parser.OFPMatch(eth_dst=mac)
+        actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
+        inst = [actions]
+        self._contr.add_flow(d, 5001, match, inst, 0, self._table_id_1x, cookie=0x01)
+
+        match = parser.OFPMatch(eth_src=mac)
+        actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
+        inst = [actions]
+        self._contr.add_flow(d, 5002, match, inst, 0, self._table_id_1x, cookie=0x02)
+        match = parser.OFPMatch(eth_dst=mac)
             
-            
-            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
-            inst = [actions]
-            match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_SERVER_DST)
-            self._contr.add_flow(d, 5200, match, inst, 0, self._table_id_1x, cookie=0x20)
+        actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
+        inst = [actions]
+        match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_SERVER_DST)
+        self._contr.add_flow(d, 5200, match, inst, 0, self._table_id_1x, cookie=0x20)
 
-       	    match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_CLIENT_DST)
+        match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP, ip_proto=Proto.IP_UDP, udp_dst=Proto.DHCP_CLIENT_DST)
 
-            actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
-            inst = [actions]
-            self._contr.add_flow(d, 5200, match, inst, 0, self._table_id_1x, cookie=0x21)
-            
-            # 'R2' rules
-            # if is a ip packet on the known mac. send to controller as well.
-            # once we have the ip address this mac is using, we delete this rule.
-            # what if multiple ips on the interface though?
+        actions = parser.OFPInstructionGotoTable(self.l2_switch_table)
+        inst = [actions]
+        self._contr.add_flow(d, 5200, match, inst, 0, self._table_id_1x, cookie=0x21)
 
-            # if src is local ip, and new ip. and dst is on the internet.
-            match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=(NETWORK_ADDRESS, NETMASK))
-            actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
-                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-            self._contr.add_flow(d, R2_PRIORITY+1, match, inst, 0, self._table_id_1x, cookie=0x03)
+    def add_ip_learn_rules(self, d, parser, ofproto, mac):
+        # 'R2' rules
+        # if is a ip packet on the known mac. send to controller as well.
+        # once we have the ip address this mac is using, we delete this rule.
+        # what if multiple ips on the interface though?
 
-            # if dst is local ip, and new ip. and src is on the internet
-            match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
-            actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
-                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-            self._contr.add_flow(d, R2_PRIORITY+2, match, inst, 0, self._table_id_1x, cookie=0x04)
+        # if src is local ip, and new ip. and dst is on the internet.
+        match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
+                                ipv4_src=(NETWORK_ADDRESS, NETMASK))
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
+        inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        self._contr.add_flow(d, R2_PRIORITY+1, match, inst, 0, self._table_id_1x, cookie=0x03)
 
-            # if both dst and src is local ip, and new ip. might need a special case if both local.
-            match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=(NETWORK_ADDRESS, NETMASK),
-                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
-            actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
-                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-            self._contr.add_flow(d, R2_PRIORITY+3, match, inst, 0, self._table_id_1x, cookie=0x05)
+        # if dst is local ip, and new ip. and src is on the internet
+        match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
+                                ipv4_dst=(NETWORK_ADDRESS, NETMASK))
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
+        inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        self._contr.add_flow(d, R2_PRIORITY+2, match, inst, 0, self._table_id_1x, cookie=0x04)
 
-            match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
-                                    ipv4_src=(NETWORK_ADDRESS, NETMASK),
-                                    ipv4_dst=(NETWORK_ADDRESS, NETMASK))
-            actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-            inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
-                    parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-            self._contr.add_flow(d, R2_PRIORITY+4, match, inst, 0, self._table_id_1x, cookie=0x06)
+        # if both dst and src is local ip, and new ip. might need a special case if both local.
+        match = parser.OFPMatch(eth_dst=mac, eth_type=Proto.ETHER_IP,
+                                ipv4_src=(NETWORK_ADDRESS, NETMASK),
+                                ipv4_dst=(NETWORK_ADDRESS, NETMASK))
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
+        inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        self._contr.add_flow(d, R2_PRIORITY+3, match, inst, 0, self._table_id_1x, cookie=0x05)
+
+        match = parser.OFPMatch(eth_src=mac, eth_type=Proto.ETHER_IP,
+                                ipv4_src=(NETWORK_ADDRESS, NETMASK),
+                                ipv4_dst=(NETWORK_ADDRESS, NETMASK))
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
+        inst = [parser.OFPInstructionGotoTable(self.l2_switch_table),
+                parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        self._contr.add_flow(d, R2_PRIORITY+4, match, inst, 0, self._table_id_1x, cookie=0x06)
+
+    def remove_portal_fallback_rules(self, datapath, mac):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        match = parser.OFPMatch(eth_src=mac)
+        self._contr.remove_flow(datapath,
+                                parser,
+                                self._table_id_1x,
+                                ofproto.OFPFC_DELETE_STRICT,
+                                20000, match,
+                                ofproto.OFPP_ANY, ofproto.OFPG_ANY,
+                                cookie=0x0f)
+
+        match = parser.OFPMatch(eth_dst=mac)
+        self._contr.remove_flow(datapath,
+                                parser,
+                                self._table_id_1x,
+                                ofproto.OFPFC_DELETE_STRICT,
+                                20000, match,
+                                ofproto.OFPP_ANY, ofproto.OFPG_ANY,
+                                cookie=0x10)
+
 
     def log_client_off(self, mac, user):
         if mac in self.authenicated_mac_to_user:
@@ -356,7 +382,7 @@ class Dot1XForwarder(ABCRyuApp):
         match = parser.OFPMatch(eth_type=Proto.EAPOL)
         inst = [parser.OFPInstructionGotoTable(self.l2_switch_table)]
 
-        self._contr.add_flow(datapath, 10000, match, inst, 0, self._table_id_1x, cookie=0x08)
+        self._contr.add_flow(datapath, 40000, match, inst, 0, self._table_id_1x, cookie=0x08)
 
 #        match = parser.OFPMatch(eth_type=Proto.EAPOL)
 #	inst = [parser.OFPInstructionGotoTable(self.l2_switch_table)]
@@ -373,17 +399,16 @@ class Dot1XForwarder(ABCRyuApp):
         
         # all traffic goes to the portal nuc. this is so we can trigger 802.1x.
         # which hostapd does by listening for dhcp only
-#        match = parser.OFPMatch(in_port=PORTAL_PORT)
-#        actions = [parser.OFPActionOutput(ACCESS_PORT)]
-#        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-#                                             actions)]
-#        self._contr.add_flow(datapath, 1000, match, inst, 0, self._table_id_1x, cookie=0x0b)
+        match = parser.OFPMatch(eth_src="08:00:27:00:03:02")
+        inst = [parser.OFPInstructionGotoTable(self.l2_switch_table)]
+        self._contr.add_flow(datapath, 1000, match, inst, 0, self._table_id_1x, cookie=0x0b)
 
-#        match = parser.OFPMatch(in_port=ACCESS_PORT)
-#        actions = [parser.OFPActionOutput(PORTAL_PORT)]
-#        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-#                                             actions)]
-        self._contr.add_flow(datapath, 1000, match, inst, 0, self._table_id_1x, cookie=0x0c)
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionSetField(eth_dst="08:00:27:00:03:02")]
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+                                             actions),
+                parser.OFPInstructionGotoTable(self.l2_switch_table)]
+        self._contr.add_flow(datapath, 0, match, inst, 0, self._table_id_1x, cookie=0x0c)
 
     def packet_in(self, event):
         """Called when the controller receives a packet in message from the switch
